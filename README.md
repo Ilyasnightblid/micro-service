@@ -14,7 +14,7 @@
 
 | Member Name | Role & Core Responsibilities |
 | :--- | :--- |
-| **Ilyas [Last Name]** | **Lead Architect & Order Service:** Saga Orchestrator, State Transitions, Compensations. |
+| **Member 1** | **Lead Architect & Order Service:** Saga Orchestrator, State Transitions, Compensations. |
 | **Member 2** | **Catalog & Inventory Service:** Stock management, 10-minute hold TTL, Stock release. |
 | **Member 3** | **Delivery & Logistics Service:** Courier dispatch, Optimistic locking, Telemetry. |
 | **Member 4** | **Payment & External Integration:** Payment simulator, Automated refunds. |
