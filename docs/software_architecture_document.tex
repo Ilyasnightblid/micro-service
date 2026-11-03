@@ -1,0 +1,430 @@
+\documentclass[11pt,a4paper]{article}
+
+% --- Packages ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{listings}
+\usepackage{fancyhdr}
+\usepackage{tcolorbox}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{microtype}
+
+% --- Colors ---
+\definecolor{primary}{RGB}{20, 50, 95}
+\definecolor{secondary}{RGB}{41, 128, 185}
+\definecolor{codebg}{RGB}{245, 247, 250}
+\definecolor{frameborder}{RGB}{210, 215, 225}
+\definecolor{keywordcolor}{RGB}{0, 102, 204}
+\definecolor{stringcolor}{RGB}{163, 21, 21}
+
+% --- Hyperref Setup ---
+\hypersetup{
+    colorlinks=true,
+    linkcolor=primary,
+    filecolor=magenta,      
+    urlcolor=secondary,
+    citecolor=primary,
+    pdftitle={Software Architecture Document - Order and Delivery Coordination},
+    pdfpagemode=FullScreen,
+}
+
+% --- Listings (Code & JSON) ---
+\lstset{
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\footnotesize,
+    breaklines=true,
+    frame=single,
+    rulecolor=\color{frameborder},
+    tabsize=2,
+    showstringspaces=false,
+    keywordstyle=\color{keywordcolor}\bfseries,
+    stringstyle=\color{stringcolor},
+    commentstyle=\color{gray}\itshape
+}
+
+% --- Header & Footer ---
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\textcolor{gray}{\small Microservices Course --- Architecture Dossier}}
+\rhead{\textcolor{gray}{\small Project 04: Order \& Delivery Coordination}}
+\cfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% --- Custom Boxes ---
+\tcbuselibrary{skins,breakable}
+\newtcolorbox{adrbox}[1]{
+    colback=codebg,
+    colframe=primary,
+    fonttitle=\bfseries\color{white},
+    title=#1,
+    sharp corners,
+    boxrule=1pt,
+    enhanced,
+    breakable
+}
+
+\begin{document}
+
+% --- Title Page ---
+\begin{titlepage}
+    \centering
+    \vspace*{1.5cm}
+    
+    {\Huge \bfseries \color{primary} Software Architecture Document}\\[0.4cm]
+    {\Large \bfseries \color{secondary} Intermediate Deliverable: Architecture Dossier}\\[0.2cm]
+    {\large Distributed Workflows, Cancellations, and State Consistency}
+    
+    \vspace{1.2cm}
+    \rule{\linewidth}{1.2pt}\\[0.4cm]
+    {\LARGE \textbf{Project 04: Urban Online Clothing Store Platform}}\\[0.2cm]
+    \rule{\linewidth}{1.2pt}
+    
+    \vspace{2cm}
+    \begin{minipage}{0.48\textwidth}
+        \textbf{Context \& Scope:}\\
+        Course: Distributed Systems \& Microservices\\
+        Academic Year: 2026\\
+        Target: Local On-Demand Fashion Delivery
+    \end{minipage}
+    \hfill
+    \begin{minipage}{0.48\textwidth}
+        \begin{flushright}
+            \textbf{Group Members:}\\
+            Student 1: \textit{[Name / ID]} --- Order \& Saga\\
+            Student 2: \textit{[Name / ID]} --- Inventory \& Payment\\
+            Student 3: \textit{[Name / ID]} --- Delivery \& Courier\\
+            Student 4: \textit{[Name / ID]} --- Auth, Gateway \& Sec\\
+            Student 5: \textit{[Name / ID]} --- DevOps \& Tests
+        \end{flushright}
+    \end{minipage}
+
+    \vfill
+    {\small \today \quad | \quad Version 1.0.0 (Intermediate Submission)}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ==========================================
+% SECTION 1
+% ==========================================
+\section{Context, Scope and Requirements}
+
+\subsection{Application Domain and Context Selection}
+This project implements an on-demand, local fashion retail coordination platform. Unlike traditional asynchronous postal e-commerce where deliveries take days and inventory is consolidated in regional mega-warehouses, this system coordinates \textbf{instant urban fulfillment} from physical city boutique stores directly to customers through independent local couriers within a 2-hour window.
+
+This specific domain introduces distinct operational constraints:
+\begin{itemize}[noitemsep]
+    \item \textbf{Unique SKU Stock Constraints:} Apparel sizes and colors are strictly finite per physical boutique; item holds cannot be maintained indefinitely without payment.
+    \item \textbf{Human Physical Operations:} Orders require a physical store staff member to locate, inspect, pack, and prepare garments before handing them to a courier.
+    \item \textbf{Dynamic Courier Allocation:} Logistics depend on real-time vehicle capacity, geographic proximity, and volatile courier acceptance.
+\end{itemize}
+
+\subsection{Actors, Roles and Responsibilities}
+\begin{description}[leftmargin=!,labelwidth=3.5cm]
+    \item[Customer (Requester):] Discovers clothing items, reserves stock, authorizes payments, tracks delivery progress, and initiates pre-fulfillment cancellations.
+    \item[Staff Member (Store):] Receives paid orders, prepares and packages apparel items, and updates readiness to \texttt{READY\_FOR\_DELIVERY}.
+    \item[Courier (Logistics):] Receives delivery dispatch opportunities, atomically claims assignments, reports parcel pickup, and provides proof-of-delivery.
+    \item[Store Admin:] Manages the catalog, monitors fulfillment health, and intervenes in dead-letter or escalated compensation scenarios.
+\end{description}
+
+\subsection{Business Rules and Invariants}
+\begin{itemize}
+    \item \textbf{INV-1 (Stock Reservation TTL):} Garment stock reservations are tentative with an exact 10-minute Time-To-Live (TTL). Unpaid reservations are automatically returned to inventory.
+    \item \textbf{INV-2 (Single Assignment Invariant):} Exactly one courier can be assigned to a delivery task. Conflicting claims on the same delivery mission must be handled atomically; double assignments are prohibited.
+    \item \textbf{INV-3 (Point of No Return):} Customer cancellations are strictly permissible prior to the physical pickup event (\texttt{IN\_TRANSIT}). Once a courier confirms pickup, the cancellation API returns a conflict, directing the customer to the standard return policy.
+    \item \textbf{INV-4 (Compensating Transactions):} Any terminal failure along the distributed fulfillment workflow (e.g., payment declined, packing impossibility, logistics failure) must execute automated reverse compensating steps.
+\end{itemize}
+
+\subsection{Workload Profiles and Measurable Targets}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l X X}
+\toprule
+\textbf{Indicator} & \textbf{Real-World Ambition} & \textbf{Demonstration Environment (Docker)} \\
+\midrule
+\textbf{Normal Throughput} & 150 orders/minute & 30 orders/minute \\
+\textbf{Peak Throughput} & 1,200 orders/minute & 100 orders/minute \\
+\textbf{p95 State Transition Latency} & $\le 250\text{ ms}$ & $\le 400\text{ ms}$ \\
+\textbf{Event Propagation Delay} & $\le 1.0\text{ s}$ across all services & $\le 2.0\text{ s}$ via local RabbitMQ \\
+\textbf{Concurrent Double Assignment} & 0\% tolerated & 0\% verified with 50 parallel requests \\
+\textbf{Recovery Time (MTTR)} & $< 15\text{ s}$ (Automated Pod replacement) & $< 10\text{ s}$ via Docker container restart \\
+\textbf{Compensation Consistency} & 100\% ledger \& inventory balance & 100\% reconciliation verified \\
+\bottomrule
+\end{tabularx}
+\caption{Measurable performance, capacity, and resilience targets.}
+\label{tab:targets}
+\end{table}
+
+\subsection{Compliance with Mandatory Constraints}
+\begin{enumerate}
+    \item \textbf{Long-Running Workflow:} Coordination from order placement through payment, boutique packing, and delivery spans minutes to hours and is governed by an Orchestrated Saga.
+    \item \textbf{Temporary Unavailability:} Inter-service asynchronous queues incorporate Dead-Letter Exchanges (DLX), exponential backoff retries, and consumer idempotency tables.
+    \item \textbf{Decoupled Load Profiles:} Read-heavy order tracking queries are isolated from state-transition command pipelines.
+    \item \textbf{Irreversible Transitions:} Physical item handover cannot simply be rolled back at the database level; it requires explicit compensation workflows and status escalations.
+\end{enumerate}
+
+\newpage
+% ==========================================
+% SECTION 2
+% ==========================================
+\section{Architecture Views}
+
+\subsection{System Context View (C4 Level 1)}
+The platform boundaries interact with four distinct human user categories and two simulated third-party integrations:
+\begin{itemize}
+    \item \textbf{Clients:} Customer Mobile/Web App, Boutique Tablet App, Courier Mobile App, and Admin Web Console.
+    \item \textbf{API Gateway:} Central entrance point handling reverse proxying, rate-limiting, authentication enforcement, and CORS.
+    \item \textbf{External Integrations:} Simulated Payment Gateway (Stripe-compliant contract) and SMS/Push Provider.
+\end{itemize}
+
+\subsection{Service Decomposition and Data Ownership}
+To respect architectural requirements, five dedicated application microservices are defined, each maintaining independent persistence with no shared storage:
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabularx}{\textwidth}{p{3.5cm} X p{3.2cm} p{2.8cm}}
+\toprule
+\textbf{Service Name} & \textbf{Business Responsibilities} & \textbf{Data Ownership} & \textbf{Dependencies} \\
+\midrule
+\textbf{Auth Service} & User credentials, JWT token generation, RBAC claims. & User, Role, Profile & None \\
+\textbf{Order Service} & Order aggregate lifecycle, Saga orchestrator, cancellation rules. & Orders, OrderItems, SagaState & Inventory, Payment, Delivery \\
+\textbf{Catalog \& Inventory} & Garment stock levels, SKU metadata, reservation TTLs. & Items, Stock, Reservations & RabbitMQ \\
+\textbf{Payment Service} & Payment authorization, token handling, refunds. & Transactions, Refunds & Stripe Simulator \\
+\textbf{Delivery Service} & Courier assignments, mission tracking, transit telemetry. & DeliveryMissions, Couriers & RabbitMQ \\
+\textbf{Notification Service} & Push alerts, customer SMS, SSE live updates. & NotificationLogs & RabbitMQ \\
+\bottomrule
+\end{tabularx}
+\caption{Microservices decomposition, responsibilities, and data boundaries.}
+\end{table}
+
+\subsection{Deployment View}
+The entire application stack is containerized and orchestrated via Docker Compose:
+\begin{itemize}
+    \item \textbf{Networks:}
+    \begin{itemize}[noitemsep]
+        \item \texttt{front-tier}: Accessible from the host, binding ports \texttt{80/443} via Traefik.
+        \item \texttt{back-tier}: Internal isolated bridge connecting application services and RabbitMQ broker (AMQP port 5672).
+        \item \texttt{data-tier}: Restrictive internal network for PostgreSQL instances and Redis.
+    \end{itemize}
+    \item \textbf{Storage Volumes:} Isolated Docker persistent named volumes per database (\texttt{pg\_order\_data}, \texttt{pg\_inv\_data}, \texttt{pg\_deliv\_data}).
+    \item \textbf{Observability:} Prometheus scrapes application metric endpoints (\texttt{/metrics}); Grafana visualizes latencies and throughput.
+\end{itemize}
+
+\subsection{Interaction Sequences}
+
+\subsubsection{Scenario 1: End-to-End Successful Workflow (Happy Path)}
+\begin{enumerate}[noitemsep]
+    \item Customer submits \texttt{POST /api/v1/orders}.
+    \item Order Service invokes Inventory Service to tentatively reserve stock with a 10-minute TTL.
+    \item Customer issues payment via \texttt{POST /api/v1/orders/\{id\}/pay}. Payment Service executes transaction; Order Service advances state to \texttt{PAID}.
+    \item Boutique Staff packs apparel and updates state to \texttt{READY\_FOR\_DELIVERY}.
+    \item Order Service publishes \texttt{DeliveryRequestedEvent} to RabbitMQ.
+    \item Courier claims the dispatch mission atomically. Delivery Service advances state to \texttt{ASSIGNED}.
+    \item Courier scans pickup (\texttt{IN\_TRANSIT}) and subsequently confirms final drop-off (\texttt{DELIVERED}). Order Service marks the order completed.
+\end{enumerate}
+
+\subsubsection{Scenario 2: Customer Pre-Fulfillment Cancellation (Compensating Saga)}
+\begin{enumerate}[noitemsep]
+    \item Order is currently in state \texttt{READY\_FOR\_DELIVERY}.
+    \item Customer submits \texttt{POST /api/v1/orders/\{id\}/cancel}.
+    \item Order Service verifies the guard: state is not \texttt{IN\_TRANSIT}. State transitions to \texttt{CANCELLING}.
+    \item \textbf{Compensating Action 1:} Order Service emits \texttt{CancelDeliveryMissionCommand}. Delivery Service revokes the mission dispatch.
+    \item \textbf{Compensating Action 2:} Order Service emits \texttt{ReleaseStockReservationCommand}. Inventory Service increments garment stock.
+    \item \textbf{Compensating Action 3:} Order Service emits \texttt{RefundPaymentCommand}. Payment Service triggers full electronic refund.
+    \item Once all compensation acknowledgments arrive, Order Service seals state as \texttt{CANCELLED}.
+\end{enumerate}
+
+\subsubsection{Scenario 3: Concurrent Race Condition --- Cancellation vs. Courier Pickup}
+\begin{enumerate}[noitemsep]
+    \item Customer issues \texttt{POST /api/v1/orders/\{id\}/cancel} at $t_0$.
+    \item Simultaneously at $t_0 + 5\text{ ms}$, Courier issues \texttt{PUT /api/v1/deliveries/\{id\}/pickup}.
+    \item Delivery Service commits pickup first and publishes \texttt{OrderPickedUpEvent}.
+    \item Order Service transitions aggregate state to \texttt{IN\_TRANSIT}.
+    \item The concurrent cancellation command is processed by Order Service: the state machine evaluates \texttt{INV-3} guard.
+    \item Cancellation is rejected with HTTP \texttt{409 Conflict} (\texttt{"ORDER\_ALREADY\_IN\_TRANSIT"}). The client UI informs the customer that garments are already with the courier.
+\end{enumerate}
+
+\newpage
+% ==========================================
+% SECTION 3
+% ==========================================
+\section{API and Message Contracts}
+
+\subsection{Synchronous HTTP REST Contracts}
+
+\begin{lstlisting}[language=json,caption={Order Creation Request (POST /api/v1/orders)}]
+{
+  "boutiqueId": "btq_casablanca_anfaplace",
+  "items": [
+    { "sku": "GARMENT-JACKET-L-BLK", "quantity": 1, "unitPrice": 450.00 },
+    { "sku": "GARMENT-TROUSERS-32-BLU", "quantity": 1, "unitPrice": 250.00 }
+  ],
+  "deliveryLocation": {
+    "street": "Boulevard d'Anfa",
+    "city": "Casablanca",
+    "coordinates": { "lat": 33.5898, "lng": -7.6330 }
+  }
+}
+\end{lstlisting}
+
+\begin{lstlisting}[language=json,caption={Order Creation Response (201 Created)}]
+{
+  "orderId": "ord_91827364",
+  "status": "PENDING_PAYMENT",
+  "totalAmount": 700.00,
+  "currency": "MAD",
+  "reservationExpiresAt": "2026-11-03T15:10:00Z"
+}
+\end{lstlisting}
+
+\subsection{Asynchronous Message Contracts (AMQP / RabbitMQ)}
+\begin{itemize}
+    \item \textbf{Exchange:} \texttt{order.events.exchange} (Type: \texttt{topic}, Durable: \texttt{true}).
+    \item \textbf{Dead Letter Exchange:} \texttt{order.dlx.exchange} with 3 exponential retries.
+\end{itemize}
+
+\begin{lstlisting}[language=json,caption={Event Payload: OrderPaidEvent (Routing key: order.lifecycle.paid)}]
+{
+  "eventId": "evt_7718a2bc-33d8-4f32",
+  "aggregateId": "ord_91827364",
+  "eventType": "ORDER_PAID",
+  "timestamp": "2026-11-03T15:02:15Z",
+  "version": 1,
+  "payload": {
+    "orderId": "ord_91827364",
+    "customerId": "cust_4001",
+    "boutiqueId": "btq_casablanca_anfaplace",
+    "amountPaid": 700.00,
+    "currency": "MAD"
+  }
+}
+\end{lstlisting}
+
+\subsection{Duplicate Handling and Idempotency}
+All message consumers implement an **Idempotent Consumer Pattern**. Inbound messages carry a unique \texttt{eventId}. Consumers execute an atomic verification against an \texttt{idempotent\_processed\_events} table. Duplicated deliveries are acknowledged immediately without executing side effects.
+
+\newpage
+% ==========================================
+% SECTION 4
+% ==========================================
+\section{Technical Mechanisms and Tools Inventory}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabularx}{\textwidth}{p{3.2cm} p{2.8cm} X p{3.2cm}}
+\toprule
+\textbf{Mechanism} & \textbf{Tool \& Version} & \textbf{Configuration Strategy} & \textbf{Verification Method} \\
+\midrule
+\textbf{Routing \& Gateway} & Traefik v3 / Nginx & Path prefix routing (\texttt{/api/v1/orders}), rate limiting (100 req/min/IP). & Ingress HTTP requests via cURL. \\
+\textbf{Service Discovery} & Docker Internal DNS & Automatic alias resolution over \texttt{back-tier} network. & Service-to-service DNS resolution test. \\
+\textbf{Health Checks} & Docker Healthcheck & \texttt{interval: 10s}, \texttt{timeout: 3s}, \texttt{retries: 3}, \texttt{restart: on-failure}. & Killing container PID; observe automatic resurrection. \\
+\textbf{Timeouts \& Circuit Breaking} & Resilience4j & 2.5s HTTP timeout, 3 bounded retries, exponential backoff with jitter. & Induce latency with Toxiproxy; observe circuit open. \\
+\textbf{Security \& RBAC} & JWT (RS256) & Claims: \texttt{roles: [CUSTOMER, COURIER, STAFF, ADMIN]}. & Submit courier endpoint with customer token $\rightarrow$ verify 403. \\
+\textbf{Observability} & Prometheus + Grafana & Metric collection from Spring Actuator / Prometheus exporters. & Visual inspection of real-time latency graphs. \\
+\bottomrule
+\end{tabularx}
+\caption{Mechanisms, tools, configuration, and verification inventory.}
+\end{table}
+
+\newpage
+% ==========================================
+% SECTION 5
+% ==========================================
+\section{Architectural Decision Records (ADRs)}
+
+\begin{adrbox}{ADR-01: Orchestration-Based Saga vs. Choreography-Based Saga}
+\textbf{Status:} Accepted\\
+\textbf{Context:} The fulfillment process involves multi-party coordination, strict step ordering, customer-initiated cancellations, and compensations.\\
+\textbf{Decision:} Adopt an **Orchestration-Based Saga** centered within the Order Service.\\
+\textbf{Alternatives Considered:} Pure Event Choreography.\\
+\textbf{Justification \& Trade-offs:} In choreography, cancellation logic becomes scattered across Inventory, Delivery, and Payment services, leading to "cyclic event storms" and difficult debugging. The orchestrator explicitly manages state transitions (\texttt{CANCELLING}, \texttt{COMPENSATING}) in a single state machine. The trade-off is a tighter coupling of the Order Service to the workflow definition, which is acceptable given the clear business boundaries.
+\end{adrbox}
+
+\vspace{0.3cm}
+
+\begin{adrbox}{ADR-02: Isolated Database per Service vs. Shared Relational Store}
+\textbf{Status:} Accepted\\
+\textbf{Context:} Ensuring autonomous microservice lifecycles, loose schema coupling, and distinct performance requirements.\\
+\textbf{Decision:} Implement strict **Database-per-Service** (individual PostgreSQL container per microservice).\\
+\textbf{Alternatives Considered:} Shared PostgreSQL database with independent schemas.\\
+\textbf{Justification \& Trade-offs:} Shared databases inevitably lead to cross-schema SQL joins and coupling at the database storage layer. Individual containers enforce architectural isolation. The accepted trade-off is the loss of cross-entity ACID transactions, requiring eventual consistency governed by our Saga pattern.
+\end{adrbox}
+
+\vspace{0.3cm}
+
+\begin{adrbox}{ADR-03: Concurrency Control on Courier Assignment}
+\textbf{Status:} Accepted\\
+\textbf{Context:} Multiple couriers may attempt to accept the same high-priority delivery task simultaneously.\\
+\textbf{Decision:} Enforce **Optimistic Locking with Versioning** combined with a PostgreSQL unique constraint on assigned mission IDs.\\
+\textbf{Alternatives Considered:} Pessimistic table row locking (\texttt{SELECT ... FOR UPDATE}).\\
+\textbf{Justification \& Trade-offs:} Pessimistic locking creates database thread contention and stalls API throughput during peak hours. Optimistic locking immediately awards the mission to the fastest committer, while competing couriers receive an immediate \texttt{409 Conflict} response in $< 15\text{ ms}$.
+\end{adrbox}
+
+\vspace{0.3cm}
+
+\begin{adrbox}{ADR-04: Asynchronous Messaging via RabbitMQ vs. Apache Kafka}
+\textbf{Status:} Accepted\\
+\textbf{Context:} Inter-service asynchronous notification, compensation triggering, and delivery dispatching.\\
+\textbf{Decision:} Use **RabbitMQ** with AMQP 0-9-1.\\
+\textbf{Alternatives Considered:} Apache Kafka.\\
+\textbf{Justification \& Trade-offs:} Our workflow demands complex routing keys (\texttt{topic} exchanges), individual message acknowledgment, and Dead-Letter Exchanges for failed compensations, rather than high-throughput immutable event streaming. Kafka introduces unjustified operational complexity (ZooKeeper/KRaft, partition management) for our containerized five-service scope.
+\end{adrbox}
+
+\newpage
+% ==========================================
+% SECTION 6
+% ==========================================
+\section{Planned Validation and Experiments}
+
+To validate architectural targets and meet project evaluation criteria, five reproducible experiments are formulated:
+
+\subsection{Experiment 1: Concurrent Transitions (Race Condition Test)}
+\begin{itemize}[noitemsep]
+    \item \textbf{Scenario:} Simultaneous dispatch of 50 concurrent requests competing for one delivery mission, alongside an instantaneous customer cancellation request.
+    \item \textbf{Tools:} k6 load testing script / Python multi-threading.
+    \item \textbf{Expected Outcome:} Exactly one courier receives \texttt{200 OK}; all other competing requests return \texttt{409 Conflict}. Invariants \texttt{INV-2} and \texttt{INV-3} remain unviolated.
+\end{itemize}
+
+\subsection{Experiment 2: Load and Replication Comparison (1 vs. N Instances)}
+\begin{itemize}[noitemsep]
+    \item \textbf{Scenario:} Benchmark Order Service performance under 100 virtual users generating 1,000 orders over 3 minutes. Compare single instance ($N=1$) versus scaled instances ($N=3$) behind Traefik.
+    \item \textbf{Metrics:} p95 response time, throughput (RPS), and server CPU utilization.
+    \item \textbf{Expected Outcome:} Scaled setup maintains p95 latency under $300\text{ ms}$ with 0\% HTTP 5xx errors, whereas $N=1$ displays latency degradation above $1200\text{ ms}$.
+\end{itemize}
+
+\subsection{Experiment 3: Failure of a Workflow Step and Recovery}
+\begin{itemize}[noitemsep]
+    \item \textbf{Scenario:} Forcibly stop the Payment Service container (\texttt{docker stop payment-service}) during in-flight order processing.
+    \item \textbf{Expected Outcome:} Order Service queues messages in RabbitMQ with retry headers; upon restarting the service (\texttt{docker start payment-service}), pending transactions are processed without message loss or inconsistent order states.
+\end{itemize}
+
+\subsection{Experiment 4: Role-Based Access Control (RBAC) Verification}
+\begin{itemize}[noitemsep]
+    \item \textbf{Scenario:} Execute negative test suites using Postman/PyTest:
+    \begin{itemize}[noitemsep]
+        \item Courier role attempting to create orders or view other couriers' earnings.
+        \item Customer role attempting to accept delivery dispatches.
+        \item Unauthenticated requests targeting internal management endpoints.
+    \end{itemize}
+    \item \textbf{Expected Outcome:} 100\% of unauthorized requests return \texttt{401 Unauthorized} or \texttt{403 Forbidden}.
+\end{itemize}
+
+\subsection{Experiment 5: Rolling Update and Zero-Downtime Rollback}
+\begin{itemize}[noitemsep]
+    \item \textbf{Scenario:} Deploy an updated image (\texttt{delivery-service:v2}) while running synthetic load, followed by an immediate rollback to \texttt{v1}.
+    \item \textbf{Expected Outcome:} Zero dropped requests observed at the gateway layer; Docker healthchecks smoothly transition traffic without downtime.
+\end{itemize}
+
+\end{document}

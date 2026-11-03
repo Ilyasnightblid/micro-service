@@ -1,0 +1,702 @@
+openapi: 3.0.3
+info:
+  title: Urban Online Clothing Store Platform - Microservices API
+  description: |
+    Comprehensive API contract for the Distributed Order and Delivery Coordination Platform.
+    Covers synchronous HTTP REST interfaces across the 5 independent business microservices,
+    enforcing RBAC authorization, idempotency keys, and explicit conflict statuses (e.g. 409 Conflict).
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local API Gateway (Traefik / Nginx Ingress)
+
+tags:
+  - name: Auth & Account Service
+    description: Authentication, user management, and JWT token issuance
+  - name: Catalog & Inventory Service
+    description: Garment catalog discovery and tentative stock reservation
+  - name: Order Service
+    description: Order lifecycle and Saga orchestrator (cancellations & preparation)
+  - name: Delivery & Logistics Service
+    description: Courier dispatching, atomic assignment, and telemetry
+  - name: Payment Service
+    description: Payment processing simulator and automated refunds
+
+paths:
+  # ================================================================
+  # AUTH SERVICE
+  # ================================================================
+  /auth/login:
+    post:
+      tags:
+        - Auth & Account Service
+      summary: Authenticate user and receive JWT
+      description: Returns a signed JWT token containing roles (CUSTOMER, COURIER, STAFF, ADMIN).
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid email or password
+
+  # ================================================================
+  # CATALOG & INVENTORY SERVICE
+  # ================================================================
+  /items:
+    get:
+      tags:
+        - Catalog & Inventory Service
+      summary: Browse garment items and check stock
+      description: Public endpoint to view available clothes, sizes, colors, and current boutique stock.
+      operationId: getCatalogItems
+      parameters:
+        - name: boutiqueId
+          in: query
+          required: false
+          schema:
+            type: string
+            example: btq_casablanca_anfaplace
+      responses:
+        '200':
+          description: List of catalog items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CatalogItem'
+
+  # ================================================================
+  # ORDER SERVICE
+  # ================================================================
+  /orders:
+    post:
+      tags:
+        - Order Service
+      summary: Create order and initiate stock hold
+      description: |
+        Creates a new order in `PENDING_PAYMENT` state and triggers synchronous stock reservation with a 10-minute TTL.
+        Requires an Idempotency-Key header to prevent duplicate orders.
+      operationId: createOrder
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: X-Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+            example: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: Invalid request payload or business rule violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Conflict - Insufficient stock for requested items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      tags:
+        - Order Service
+      summary: List user orders
+      operationId: listOrders
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Returns orders belonging to authenticated customer
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrderResponse'
+
+  /orders/{orderId}:
+    get:
+      tags:
+        - Order Service
+      summary: Get order details and current status
+      operationId: getOrderById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: ord_91827364
+      responses:
+        '200':
+          description: Detailed order state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '404':
+          description: Order not found
+
+  /orders/{orderId}/cancel:
+    post:
+      tags:
+        - Order Service
+      summary: Request order cancellation (Triggers Compensating Saga)
+      description: |
+        Allowed ONLY if order is not yet `IN_TRANSIT`.
+        Triggers release of stock, payment refund, and revokes courier dispatch.
+      operationId: cancelOrder
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Cancellation accepted and compensations initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orderId:
+                    type: string
+                  status:
+                    type: string
+                    example: CANCELLING
+                  message:
+                    type: string
+                    example: Compensating transactions triggered (stock released, full refund requested).
+        '409':
+          description: Conflict - Order is already IN_TRANSIT with courier. Direct cancellation impossible.
+
+  /orders/{orderId}/prepared:
+    put:
+      tags:
+        - Order Service
+      summary: Mark order prepared and packed (Staff Role)
+      description: Staff confirms clothes are inspected, packed, and ready for courier pickup.
+      operationId: markOrderPrepared
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Order status moved to READY_FOR_DELIVERY; dispatch task published.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '403':
+          description: Forbidden - User does not have STAFF role
+
+  # ================================================================
+  # DELIVERY & LOGISTICS SERVICE
+  # ================================================================
+  /deliveries/available:
+    get:
+      tags:
+        - Delivery & Logistics Service
+      summary: List available delivery tasks for couriers
+      operationId: getAvailableDeliveries
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of pending delivery missions ready for pickup
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DeliveryMission'
+        '403':
+          description: Forbidden - Courier role required
+
+  /deliveries/{deliveryId}/accept:
+    post:
+      tags:
+        - Delivery & Logistics Service
+      summary: Atomic assignment claim by a courier
+      description: |
+        Enforces optimistic concurrency control. Exactly one courier can claim this mission.
+        Subsequent attempts will receive 409 Conflict.
+      operationId: acceptDelivery
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: deliveryId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Mission assigned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryMission'
+        '409':
+          description: Conflict - Mission already claimed by another courier.
+
+  /deliveries/{deliveryId}/pickup:
+    put:
+      tags:
+        - Delivery & Logistics Service
+      summary: Courier confirms parcel physical pickup (Point of no return)
+      description: Advances delivery state to `PICKED_UP` and locks the order against customer cancellation.
+      operationId: confirmPickup
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: deliveryId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Pickup confirmed; state updated to IN_TRANSIT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryMission'
+
+  /deliveries/{deliveryId}/complete:
+    put:
+      tags:
+        - Delivery & Logistics Service
+      summary: Confirm parcel delivery to customer
+      operationId: completeDelivery
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: deliveryId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - confirmationCode
+              properties:
+                confirmationCode:
+                  type: string
+                  example: "8492"
+      responses:
+        '200':
+          description: Delivery finalized successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryMission'
+
+  # ================================================================
+  # PAYMENT SERVICE
+  # ================================================================
+  /payments/charge:
+    post:
+      tags:
+        - Payment Service
+      summary: Process order payment (Simulator)
+      description: |
+        Processes credit card / tokenized payment for a pending order.
+        Simulates authorization with external gateway (Stripe/CMI).
+        Returns transaction ID or 402 Payment Required on failure.
+      operationId: processPayment
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentChargeRequest'
+      responses:
+        '200':
+          description: Payment successful and captured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentTransaction'
+        '400':
+          description: Invalid card details or payload
+        '402':
+          description: Payment Required - Card declined or insufficient funds
+
+  /payments/{paymentId}/refund:
+    post:
+      tags:
+        - Payment Service
+      summary: Refund a payment (Used by Cancellation Saga)
+      description: |
+        Triggers automated full or partial refund when a customer cancels an order.
+        Executed by the Order Service Saga orchestrator or Admin.
+      operationId: refundPayment
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: pay_tx_887766
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  example: CUSTOMER_CANCELLATION_BEFORE_PICKUP
+      responses:
+        '200':
+          description: Refund processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefundResponse'
+        '404':
+          description: Payment transaction not found
+        '409':
+          description: Payment already refunded
+
+  /payments/order/{orderId}:
+    get:
+      tags:
+        - Payment Service
+      summary: Get payment details for an order
+      operationId: getPaymentByOrderId
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: ord_91827364
+      responses:
+        '200':
+          description: Payment transaction details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentTransaction'
+        '404':
+          description: No payment record found for this order
+
+# ================================================================
+# COMPONENTS & SCHEMAS
+# ================================================================
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: customer@clothingstore.ma
+        password:
+          type: string
+          format: password
+          example: SecretPassword123!
+
+    LoginResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          example: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+        expiresIn:
+          type: integer
+          example: 3600
+        roles:
+          type: array
+          items:
+            type: string
+          example: ["CUSTOMER"]
+
+    CatalogItem:
+      type: object
+      properties:
+        sku:
+          type: string
+          example: GARMENT-JACKET-L-BLK
+        title:
+          type: string
+          example: Classic Leather Jacket
+        size:
+          type: string
+          example: L
+        color:
+          type: string
+          example: Black
+        price:
+          type: number
+          example: 450.00
+        availableStock:
+          type: integer
+          example: 8
+
+    CreateOrderRequest:
+      type: object
+      required:
+        - boutiqueId
+        - items
+        - deliveryLocation
+      properties:
+        boutiqueId:
+          type: string
+          example: btq_casablanca_anfaplace
+        items:
+          type: array
+          items:
+            type: object
+            required:
+              - sku
+              - quantity
+            properties:
+              sku:
+                type: string
+                example: GARMENT-JACKET-L-BLK
+              quantity:
+                type: integer
+                minimum: 1
+                example: 1
+        deliveryLocation:
+          type: object
+          required:
+            - street
+            - city
+          properties:
+            street:
+              type: string
+              example: 45 Boulevard d'Anfa
+            city:
+              type: string
+              example: Casablanca
+            coordinates:
+              type: object
+              properties:
+                lat:
+                  type: number
+                  example: 33.589886
+                lng:
+                  type: number
+                  example: -7.633036
+
+    OrderResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          example: ord_91827364
+        customerId:
+          type: string
+          example: cust_1001
+        boutiqueId:
+          type: string
+          example: btq_casablanca_anfaplace
+        status:
+          type: string
+          enum: [PENDING_PAYMENT, PAID, PREPARING, READY_FOR_DELIVERY, IN_TRANSIT, DELIVERED, CANCELLING, CANCELLED]
+          example: PENDING_PAYMENT
+        totalAmount:
+          type: number
+          example: 450.00
+        currency:
+          type: string
+          example: MAD
+        reservationExpiresAt:
+          type: string
+          format: date-time
+          example: 2026-11-03T15:10:00Z
+        createdAt:
+          type: string
+          format: date-time
+          example: 2026-11-03T15:00:00Z
+
+    DeliveryMission:
+      type: object
+      properties:
+        deliveryId:
+          type: string
+          example: del_554433
+        orderId:
+          type: string
+          example: ord_91827364
+        courierId:
+          type: string
+          nullable: true
+          example: cour_882
+        status:
+          type: string
+          enum: [PENDING_ASSIGNMENT, ASSIGNED, PICKED_UP, DELIVERED, CANCELLED]
+          example: ASSIGNED
+        pickupAddress:
+          type: string
+          example: Boutique AnfaPlace Mall, Casablanca
+        deliveryAddress:
+          type: string
+          example: 45 Boulevard d'Anfa, Casablanca
+        estimatedDeliveryMinutes:
+          type: integer
+          example: 25
+
+    PaymentChargeRequest:
+      type: object
+      required:
+        - orderId
+        - amount
+        - currency
+        - paymentMethodToken
+      properties:
+        orderId:
+          type: string
+          example: ord_91827364
+        amount:
+          type: number
+          example: 450.00
+        currency:
+          type: string
+          example: MAD
+        paymentMethodToken:
+          type: string
+          example: tok_visa_424242424242
+
+    PaymentTransaction:
+      type: object
+      properties:
+        paymentId:
+          type: string
+          example: pay_tx_887766
+        orderId:
+          type: string
+          example: ord_91827364
+        amount:
+          type: number
+          example: 450.00
+        currency:
+          type: string
+          example: MAD
+        status:
+          type: string
+          enum: [PENDING, SUCCESS, DECLINED, REFUNDED]
+          example: SUCCESS
+        transactionTimestamp:
+          type: string
+          format: date-time
+          example: 2026-11-03T15:02:00Z
+
+    RefundResponse:
+      type: object
+      properties:
+        refundId:
+          type: string
+          example: ref_119922
+        paymentId:
+          type: string
+          example: pay_tx_887766
+        orderId:
+          type: string
+          example: ord_91827364
+        refundAmount:
+          type: number
+          example: 450.00
+        status:
+          type: string
+          example: REFUNDED
+        refundedAt:
+          type: string
+          format: date-time
+          example: 2026-11-03T15:06:00Z
+
+    ErrorResponse:
+      type: object
+      required:
+        - status
+        - code
+        - title
+        - message
+      properties:
+        status:
+          type: integer
+          example: 409
+        code:
+          type: string
+          example: INSUFFICIENT_STOCK
+        title:
+          type: string
+          example: Article non disponible
+        message:
+          type: string
+          example: La veste taille L en couleur Noir n'est plus en stock dans la boutique AnfaPlace.
+        details:
+          type: object
+          additionalProperties: true
+          example:
+            sku: GARMENT-JACKET-L-BLK
+            requestedQuantity: 1
+            availableQuantity: 0
+        suggestedAction:
+          type: string
+          example: Veuillez sélectionner une autre taille ou choisir la boutique Morocco Mall.
