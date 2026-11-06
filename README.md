@@ -1,116 +1,79 @@
-# Urban Online Clothing Store Platform
-> **Microservices Architecture Project 04: Order and Delivery Coordination**  
-> *Distributed workflows, cancellations, and state consistency*
+# Urban Online Clothing Store — Order & Delivery Coordination
+> Microservices course, Project 04: distributed workflows, cancellations and state consistency.
 
-[![Microservices](https://img.shields.io/badge/Architecture-Microservices-blue.svg)](#)
-[![Docker](https://img.shields.io/badge/Container-Docker%20Compose-2496ED.svg)](#)
-[![RabbitMQ](https://img.shields.io/badge/Broker-RabbitMQ-FF6600.svg)](#)
-[![IAM](https://img.shields.io/badge/Auth-Zitadel%20OIDC-black.svg)](#)
-[![OpenAPI](https://img.shields.io/badge/API-OpenAPI%203.0-85EA2D.svg)](#)
+Local boutiques sell garments online; staff prepare orders, local couriers deliver within 2 hours.
+The platform coordinates order, stock, payment and delivery across independently deployable services.
 
----
+## Group members
+| # | Role |
+|:--|:--|
+| 1 | Lead architect & order-service (state machine, saga, compensations) |
+| 2 | catalog-service (stock, reservations) |
+| 3 | delivery-service (courier assignment, tracking) |
+| 4 | payment-service (simulator, refunds) |
+| 5 | Security & DevOps (Kong, Zitadel, observability, CI, load tests) |
 
-## 👥 Group Members & Roles
-
-| Members | Role & Core Responsibilities |
-| :--- | :--- |
-| **1** | **Lead Architect & Order Service:** Saga Orchestrator, State Transitions, Compensations. |
-| **2** | **Catalog & Inventory Service:** Stock management, 10-minute hold TTL, Stock release. |
-| **3** | **Delivery & Logistics Service:** Courier dispatch, Optimistic locking, Telemetry. |
-| **4** | **Payment & External Integration:** Payment simulator, Automated refunds. |
-| **5** | **Security & DevOps:** Zitadel IAM (OIDC/RBAC), Traefik Load Balancer, Metrics & k6 tests. |
-
----
-
-## 📌 Project Overview
-
-This platform implements an on-demand, local fashion retail coordination system. Unlike postal parcel delivery, this platform enables fast local fulfillment ($\le 2$ hours) from physical city boutiques directly to customers through local couriers.
-
-### Key Architectural Capabilities:
-1. **Saga Orchestrator (Order Service):** Manages long-running transactions and executes compensating actions if payment fails or a customer cancels prior to courier pickup.
-2. **Concurrency Control:** Enforces optimistic locking to prevent race conditions (e.g., competing couriers claiming the same delivery mission, or cancellation colliding with pickup).
-3. **Database-per-Service:** Each microservice owns its isolated persistent storage; zero cross-service SQL joins.
-4. **Zitadel IAM:** Production-ready identity provider issuing OIDC/JWT tokens with Role-Based Access Control (`CUSTOMER`, `STAFF`, `COURIER`, `ADMIN`).
-5. **Traefik Ingress & Load Balancer:** Round-robin request distribution across scaled service replicas with health checks.
-6. **Informative Error Handling:** Standardized RFC-compliant error payloads with actionable resolution messages for clients.
-
----
-
-## 📁 Repository Structure
-
-```text
-micro-service/
-│
-├── README.md                      # Entry-point project documentation (this file)
-│
-├── docs/                          # Architecture Dossier & Schemas
-│   ├── Architecture_Dossier.pdf   # Complete Software Architecture Document
-│   ├── software_architecture_document.tex  # LaTeX source code
-│   └── software_architecture_document.md   # Markdown version
-│
-└── contracts/                     # Interface Specifications
-    └── openapi.yaml               # OpenAPI 3.0 specification for all microservices
-```
-
----
-
-## 🔄 Interaction Architecture (Synchronous REST & Asynchronous Events)
-
+## Architecture (target)
 ```mermaid
-flowchart TB
-    subgraph Clients["1. Clients"]
-        Customer["Customer App"]
-        Staff["Boutique Staff"]
-        Courier["Courier Mobile"]
-    end
-
-    subgraph Security["2. Identity Provider"]
-        Zitadel["Zitadel IAM (OIDC/RBAC)"]
-    end
-
-    subgraph Edge["3. Ingress & Load Balancer"]
-        Gateway["Traefik Load Balancer (:8080)"]
-    end
-
-    subgraph Mesh["4. Application Microservices"]
-        OrderSvc["Order Service (Saga)"]
-        InvSvc["Catalog & Inventory"]
-        DelivSvc["Delivery & Logistics"]
-        PaySvc["Payment Service"]
-    end
-
-    subgraph Events["5. Message Broker"]
-        RabbitMQ{{"RabbitMQ Topic Exchange"}}
-    end
-
-    Clients -->|Login / OIDC| Zitadel
-    Clients -->|Bearer JWT Requests| Gateway
-    Gateway --> Mesh
-
-    OrderSvc -.->|order.paid / order.cancelled| RabbitMQ
-    DelivSvc -.->|delivery.picked_up / completed| RabbitMQ
-    RabbitMQ -.-> Mesh
+flowchart LR
+    Client["Web SPA / scripts"] -->|HTTPS| Kong["Kong 3.9 (gateway)"]
+    Client -->|OIDC login| Kong
+    Kong --> Zitadel["Zitadel v4 (IAM)"]
+    Kong --> Order["order-service ×2"]
+    Kong --> Catalog["catalog-service"]
+    Kong --> Payment["payment-service"]
+    Kong --> Delivery["delivery-service"]
+    Order -->|reserve stock, sync| Catalog
+    Order & Catalog & Payment & Delivery --> PG[("PostgreSQL 16<br/>1 schema per service")]
+    Order & Payment & Delivery <-.->|events| MQ{{"RabbitMQ 4"}}
+    Catalog & Notification["notification-service"] <-.- MQ
 ```
 
----
+| Concern | Choice |
+|---|---|
+| Gateway / LB | Kong OSS 3.9.x, DB-less |
+| Identity | Zitadel v4 (OIDC), JWT validated in each service |
+| Services | Node.js 24 · TypeScript · Fastify |
+| Data | PostgreSQL 16, one schema + role per service |
+| Messaging | RabbitMQ 4.x (topic exchange, DLQ, idempotent consumers) |
+| Observability | Prometheus + Grafana + cAdvisor |
+| Deployment | Docker Compose on the university server |
 
-## 📑 API Contracts (OpenAPI 3.0)
+## Repository
+```text
+services/<name>-service/   one folder per service (src, package.json, README)
+infra/kong/                gateway configuration
+docs/                      software architecture document
+contracts/                 OpenAPI specification
+Dockerfile                 shared image for all Node.js services
+docker-compose.yml         full stack
+```
+Each folder has its own README describing its responsibility and current status.
 
-All REST contracts are documented in [`contracts/openapi.yaml`](./contracts/openapi.yaml).
+## Status
+**Iteration 1 — skeleton**: Kong routes to 5 services with health checks, automatic restart and round-robin.
+Database, broker, authentication and business logic come in the next iterations.
+The SAD and OpenAPI in `docs/` and `contracts/` still describe the previous draft and are realigned in iteration 2.
 
-To view the interactive Swagger UI locally:
-1. Open [editor.swagger.io](https://editor.swagger.io/).
-2. Import `contracts/openapi.yaml`.
-3. Test endpoints with sample JSON payloads, authentication headers, and simulated `409 Conflict` errors.
+## Run (on the server)
+Prerequisites: Docker Engine 24+ with Compose v2.
+```bash
+cp .env.example .env
+docker compose up -d --build
+docker compose ps                                  # all services "healthy"
 
----
-
-## 🧪 Planned Validation & Experiments
-
-| Experiment | Target Scenario | Tool / Method |
-| :--- | :--- | :--- |
-| **1. Concurrent Transitions** | 50 concurrent couriers accepting the same delivery + concurrent customer cancel. | Python / k6 scripts |
-| **2. Load & Replication** | 1 instance vs. 3 replicas under 1,000 requests. Verify Traefik Round-Robin. | k6 / JMeter |
-| **3. Step Failure & Recovery** | Kill `payment-service` mid-saga. Verify RabbitMQ DLQ retry and automatic recovery. | Docker Chaos |
-| **4. RBAC Verification** | Unauthorized role attempts (e.g. Courier creating orders, Customer claiming deliveries). | Postman / Newman |
-| **5. Rolling Update** | Zero-downtime update between service v1 and v2 with instant rollback. | Docker rolling update |
+curl -i localhost:8000/api/v1/orders               # 200 {"items":[]} + X-Request-ID + X-Instance
+curl -i localhost:8000/api/v1/catalog/items
+curl -i localhost:8000/api/v1/payments
+curl -i localhost:8000/api/v1/deliveries
+curl -i localhost:8000/api/v1/unknown              # 404 from Kong
+```
+Load balancing and automatic restart:
+```bash
+docker compose up -d --scale order-service=2
+for i in $(seq 6); do curl -si localhost:8000/api/v1/orders | grep -i x-instance; done   # alternates
+docker compose exec order-service kill 1          # process stops → restarted by Docker
+docker compose ps order-service
+curl -s localhost:8001/upstreams/order-upstream/health   # Kong's view of replicas (server only)
+```
+Stop: `docker compose down` (keeps data) · reset: `docker compose down -v` (destroys volumes).

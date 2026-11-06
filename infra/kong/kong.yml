@@ -1,0 +1,70 @@
+# Kong DB-less declarative configuration (single public entry point).
+_format_version: "3.0"
+
+# One upstream per service: round-robin over every replica the target hostname resolves to,
+# active health checks remove a non-ready replica from traffic.
+upstreams:
+  - name: order-upstream
+    targets: [{ target: order-service:3000 }]
+    healthchecks:
+      active:
+        http_path: /health/ready
+        healthy: { interval: 5, successes: 1 }
+        unhealthy: { interval: 5, http_failures: 2, tcp_failures: 2, timeouts: 2 }
+  - name: catalog-upstream
+    targets: [{ target: catalog-service:3000 }]
+    healthchecks:
+      active:
+        http_path: /health/ready
+        healthy: { interval: 5, successes: 1 }
+        unhealthy: { interval: 5, http_failures: 2, tcp_failures: 2, timeouts: 2 }
+  - name: payment-upstream
+    targets: [{ target: payment-service:3000 }]
+    healthchecks:
+      active:
+        http_path: /health/ready
+        healthy: { interval: 5, successes: 1 }
+        unhealthy: { interval: 5, http_failures: 2, tcp_failures: 2, timeouts: 2 }
+  - name: delivery-upstream
+    targets: [{ target: delivery-service:3000 }]
+    healthchecks:
+      active:
+        http_path: /health/ready
+        healthy: { interval: 5, successes: 1 }
+        unhealthy: { interval: 5, http_failures: 2, tcp_failures: 2, timeouts: 2 }
+
+# Timeouts in ms. retries: 1 because POSTs are not idempotent without Idempotency-Key.
+services:
+  - name: order-service
+    host: order-upstream
+    connect_timeout: 2000
+    read_timeout: 5000
+    write_timeout: 5000
+    retries: 1
+    routes: [{ name: orders, paths: [/api/v1/orders], strip_path: false }]
+  - name: catalog-service
+    host: catalog-upstream
+    connect_timeout: 2000
+    read_timeout: 5000
+    write_timeout: 5000
+    retries: 1
+    routes: [{ name: catalog, paths: [/api/v1/catalog], strip_path: false }]
+  - name: payment-service
+    host: payment-upstream
+    connect_timeout: 2000
+    read_timeout: 5000
+    write_timeout: 5000
+    retries: 1
+    routes: [{ name: payments, paths: [/api/v1/payments], strip_path: false }]
+  - name: delivery-service
+    host: delivery-upstream
+    connect_timeout: 2000
+    read_timeout: 5000
+    write_timeout: 5000
+    retries: 1
+    routes: [{ name: deliveries, paths: [/api/v1/deliveries], strip_path: false }]
+
+plugins:
+  # Correlation id propagated to services (logged as correlationId) and echoed to the client.
+  - name: correlation-id
+    config: { header_name: X-Request-ID, generator: uuid, echo_downstream: true }

@@ -1,0 +1,55 @@
+name: shop
+
+# Common settings for every Node.js service (built from the shared Dockerfile).
+x-node-service: &node-service
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health/live"]
+    interval: 10s
+    timeout: 3s
+    retries: 3
+    start_period: 10s
+
+services:
+  kong:
+    image: kong:${KONG_VERSION:-3.9.1}
+    restart: unless-stopped
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/kong.yml
+      KONG_PROXY_LISTEN: 0.0.0.0:8000
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_DNS_VALID_TTL: 5 # re-resolve quickly so scaled replicas join the upstream
+    volumes:
+      - ./infra/kong/kong.yml:/kong/kong.yml:ro
+    ports:
+      - "${KONG_PROXY_PORT:-8000}:8000"
+      - "127.0.0.1:8001:8001" # Admin API: never exposed beyond localhost
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  order-service:
+    <<: *node-service
+    build: { context: ., args: { SERVICE: order-service } }
+
+  catalog-service:
+    <<: *node-service
+    build: { context: ., args: { SERVICE: catalog-service } }
+
+  payment-service:
+    <<: *node-service
+    build: { context: ., args: { SERVICE: payment-service } }
+
+  delivery-service:
+    <<: *node-service
+    build: { context: ., args: { SERVICE: delivery-service } }
+
+  notification-service:
+    <<: *node-service
+    build: { context: ., args: { SERVICE: notification-service } }

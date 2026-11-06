@@ -1,0 +1,17 @@
+# Dependencies & build output
+node_modules/
+dist/
+coverage/
+
+# Secrets & local config
+.env
+infra/certs/*
+!infra/certs/README.md
+
+# Logs & OS
+*.log
+.DS_Store
+Thumbs.db
+
+# Local assistant instructions (not shared)
+CLAUDE.md
