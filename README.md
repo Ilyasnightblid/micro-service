@@ -14,11 +14,11 @@
 
 | Member Name | Role & Core Responsibilities |
 | :--- | :--- |
-| **Member 1** | **Lead Architect & Order Service:** Saga Orchestrator, State Transitions, Compensations. |
-| **Member 2** | **Catalog & Inventory Service:** Stock management, 10-minute hold TTL, Stock release. |
-| **Member 3** | **Delivery & Logistics Service:** Courier dispatch, Optimistic locking, Telemetry. |
-| **Member 4** | **Payment & External Integration:** Payment simulator, Automated refunds. |
-| **Member 5** | **Security & DevOps:** Zitadel IAM (OIDC/RBAC), Traefik Load Balancer, Metrics & k6 tests. |
+| **1** | **Lead Architect & Order Service:** Saga Orchestrator, State Transitions, Compensations. |
+| **2** | **Catalog & Inventory Service:** Stock management, 10-minute hold TTL, Stock release. |
+| **3** | **Delivery & Logistics Service:** Courier dispatch, Optimistic locking, Telemetry. |
+| **4** | **Payment & External Integration:** Payment simulator, Automated refunds. |
+| **5** | **Security & DevOps:** Zitadel IAM (OIDC/RBAC), Traefik Load Balancer, Metrics & k6 tests. |
 
 ---
 
