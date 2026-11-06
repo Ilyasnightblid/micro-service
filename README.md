@@ -110,7 +110,7 @@ To view the interactive Swagger UI locally:
 | Experiment | Target Scenario | Tool / Method |
 | :--- | :--- | :--- |
 | **1. Concurrent Transitions** | 50 concurrent couriers accepting the same delivery + concurrent customer cancel. | Python / k6 scripts |
-| **2. Load & Replication** | 1 instance vs. 3 replicas under 1,000 requests. Verify Traefik Round-Robin. | k6 / JMeter |
+| **2. Load & Replication** | 1 instance vs. 3 replicas under 1,000 requests. Verify kong Round-Robin. |
 | **3. Step Failure & Recovery** | Kill `payment-service` mid-saga. Verify RabbitMQ DLQ retry and automatic recovery. | Docker Chaos |
 | **4. RBAC Verification** | Unauthorized role attempts (e.g. Courier creating orders, Customer claiming deliveries). | Postman / Newman |
 | **5. Rolling Update** | Zero-downtime update between service v1 and v2 with instant rollback. | Docker rolling update |
