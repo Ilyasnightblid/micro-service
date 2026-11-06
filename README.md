@@ -22,7 +22,7 @@
 
 ---
 
-## 📌 Project Overview
+## Project Overview
 
 This platform implements an on-demand, local fashion retail coordination system. Unlike postal parcel delivery, this platform enables fast local fulfillment ($\le 2$ hours) from physical city boutiques directly to customers through local couriers.
 
@@ -36,7 +36,7 @@ This platform implements an on-demand, local fashion retail coordination system.
 
 ---
 
-## 📁 Repository Structure
+## Repository Structure
 
 ```text
 micro-service/
@@ -54,7 +54,7 @@ micro-service/
 
 ---
 
-## 🔄 Interaction Architecture (Synchronous REST & Asynchronous Events)
+## Interaction Architecture (Synchronous REST & Asynchronous Events)
 
 ```mermaid
 flowchart TB
@@ -94,7 +94,7 @@ flowchart TB
 
 ---
 
-## 📑 API Contracts (OpenAPI 3.0)
+## API Contracts (OpenAPI 3.0)
 
 All REST contracts are documented in [`contracts/openapi.yaml`](./contracts/openapi.yaml).
 
@@ -105,7 +105,7 @@ To view the interactive Swagger UI locally:
 
 ---
 
-## 🧪 Planned Validation & Experiments
+## Planned Validation & Experiments
 
 | Experiment | Target Scenario | Tool / Method |
 | :--- | :--- | :--- |
@@ -114,3 +114,12 @@ To view the interactive Swagger UI locally:
 | **3. Step Failure & Recovery** | Kill `payment-service` mid-saga. Verify RabbitMQ DLQ retry and automatic recovery. | Docker Chaos |
 | **4. RBAC Verification** | Unauthorized role attempts (e.g. Courier creating orders, Customer claiming deliveries). | Postman / Newman |
 | **5. Rolling Update** | Zero-downtime update between service v1 and v2 with instant rollback. | Docker rolling update |
+
+
+## Route Plan
+
+1. The first step is to create the docker compose so that everyone can work simultaneously
+2. Create all the backend function
+3. Then we should make a small interface on each services to be able to use them correctly
+4. After that we will try to put in place solutions to keep the services going even during a failure scenario
+5. And finally, we will try to overload the services to see if our load balancer is working properly
