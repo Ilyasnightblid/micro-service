@@ -12,7 +12,7 @@
 
 ## 👥 Group Members & Roles
 
-| Member Name | Role & Core Responsibilities |
+| Members | Role & Core Responsibilities |
 | :--- | :--- |
 | **1** | **Lead Architect & Order Service:** Saga Orchestrator, State Transitions, Compensations. |
 | **2** | **Catalog & Inventory Service:** Stock management, 10-minute hold TTL, Stock release. |
