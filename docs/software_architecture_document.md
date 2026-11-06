@@ -4,11 +4,11 @@
 **Course:** Microservices Architecture  
 **Document Version:** 1.0.0 (Intermediate Submission)  
 **Authors / Group Members:**  
-- [Student Name 1] (Role: Order & Saga Orchestration)
-- [Student Name 2] (Role: Catalog, Inventory & Payments)
-- [Student Name 3] (Role: Logistics, Delivery & Routing)
-- [Student Name 4] (Role: Authentication, API Gateway & Security)
-- [Student Name 5] (Role: DevOps, Observability & Validation Tests)
+- [1] (Role: Order & Saga Orchestration)
+- [2] (Role: Catalog, Inventory & Payments)
+- [3] (Role: Logistics, Delivery & Routing)
+- [4] (Role: Authentication, API Gateway & Security)
+- [5] (Role: DevOps, Observability & Validation Tests)
 
 ---
 
