@@ -69,7 +69,7 @@ flowchart TB
     end
 
     subgraph Edge["3. Ingress & Load Balancer"]
-        Gateway["Traefik Load Balancer (:8080)"]
+        Gateway["Kong Load Balancer & API gateway(:8080)"]
     end
 
     subgraph Mesh["4. Application Microservices"]
